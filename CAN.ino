@@ -1,7 +1,4 @@
 //TODO:
-//try to send longer text
-//try to send debug text
-//в хеш функцию включить data[9] и попробовать менять
 
 //known pids
 //0 - EZS_A1, клемы
@@ -111,11 +108,6 @@
 //800? - 8 bytes, 3 bytes always different, rest zeros
 //1024 - 1053 - strange...
 
-//TODO:
-//record log when somebody go in and out of the car and pid 4 for open doors
-//check pid 0, first byte sometimes is different
-//check pid 5, last 3 bytes are different
-//check pid 6, high beam
 
 //1024 - EZS
 //1025 - SAM_B
@@ -132,10 +124,6 @@
 //1045 - MRM
 //
 
-#define AGW_SIMULATION
-//#define PRINT_IC_COMMUNICATION
-//#define CONSUMPTION_MENU
-#define DIAG_SIMULATION
 
 #include <SPI.h>
 #include <MCP2515.h>
@@ -144,14 +132,20 @@
 #include "IC.h"
 #include "KWP2000.h"
 #include "IC_ENV.h"
+#include "defines.h"
 
 extern KWP kwp;
 extern IC_ENV ic;
 Car car = Car();
 CANMSG msg;
+Diag diag = Diag();
+IC_Screen screen = IC_Screen(&diag);
+Decapsulator decap_kombo_diag_res(DIAG_ID_KOMBO_KWP_RES_ID);
 
 MCP2515 canB = MCP2515(10, 0x02, 0x9a, 0x07);
 //MCP2515 canB = MCP2515(10, 0x00, 0x90, 0x82);
+
+unsigned long temp_read_memory = 0;
 
 void setup()
 {
@@ -290,9 +284,9 @@ void command_loop()
       val.toCharArray(charBuf, 25);
       //ic_music_top_line(charBuf);
       //31 03 01 - draw pattern
-      //31 03 02 10 10 01 ff - draws letter
+      //31 03 02 10 10 ff ff - draws letter
       //31 03 03 - draw text
-      //31 03 08 - clear
+      //31 03 08 - clear  //r 1460 8 4 31 3 8 0
 
       //31 03 05 10 10 ff fa - draw dot
       //31 03 06 X1 Y1 X2 Y2 - draw line
@@ -320,6 +314,9 @@ void command_loop()
       //r 1460 8 5 3b 01 02 30 00 - time
       //r 1460 8 3 31 0a 01 - settings factory
       //r 1460 8 4 31 17 00 ff - set segment control
+
+      //r 1460 8 5 23 00 00 00 01
+
       
       uint8_t v1 = fromHexString(getValue(inputString, 1));
       diag_get_value(DIAG_ID_KOMBO_KWP_REQ_ID, v1);
@@ -467,6 +464,36 @@ void command_loop()
       char charBuf4[50];
       val4.toCharArray(charBuf4, 50);
       ic_package26(charBuf, charBuf2, charBuf3, charBuf4);
+    } else if (command == "s_start") {
+      screen.start();
+    } else if (command == "s_stop") {
+      screen.stop();
+    } else if (command == "kwp") {
+      //uint8_t val1 = fromHexString(getValue(inputString, 1));
+      uint8_t val2 = fromHexString(getValue(inputString, 1));
+      uint8_t data[val2+1];
+      for (int i = 0; i < val2; i++) {
+        uint8_t val = fromHexString(getValue(inputString, 2 + i));
+        data[i] = val;
+      }
+      diag_send(1460, data, val2, false);
+    } else if (command == "read_memory") {
+      //r 1460 8 5 23 00 00 00 10
+      temp_read_memory = 0;
+      canB.sendMsg(1460, 8, 0x05, 0x23, (temp_read_memory >> 16) & 0xff, (temp_read_memory >> 8) & 0xff, temp_read_memory & 0xff, 32);
+    } else if (command == "read_odo") {
+      temp_read_memory = 262637;
+      //262624  - 00 00 00 04 00 00 00 00 00 00 00 00 00 27 D3 50 00 27 D3 50 00 27 D3 50 81 D0 00 00 78 74 B2 92 
+      //262637  - 27 D3 50 
+
+      //19632 5B4 8 05 23 04 01 ed 03 00 00  
+
+      //19632 5B4 8 07 3d 00 00 00 01 00 00  
+      
+      printPackage(canB.sendMsg(1460, 8, 0x05, 0x23, (temp_read_memory >> 16) & 0xff, (temp_read_memory >> 8) & 0xff, temp_read_memory & 0xff, 3));
+    } else if (command == "write_odo") {
+      //r 1460 8 07 3d 04 01 ed 01 01 01
+      //r 1460 8 3 31 fb 10
     }
     //6 00 00 02 a0 51 aa
     inputString = "";
@@ -479,6 +506,9 @@ void loop()
 {
   //Receives commands from serial
   command_loop();
+
+  //screen.loop();
+  //diag.loop();
 
 #ifdef DIAG_SIMULATION
   diag_loop();
@@ -498,6 +528,18 @@ void loop()
   //receive next message
   if (!canB.receiveCANMessage(&msg, 100)) return;
 
+  //if (decap_kombo_diag_res.receive(msg)) {
+    /*
+    Serial.println("Decap received: ");
+    for (int i = 0; i < decap_kombo_diag_res.response_len; i++) {
+      Serial.print(decap_kombo_diag_res.response[i], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+    */
+  //  screen.pixel();
+  //}
+
   //prints all packages (for debugging)
   if (ic.all_output) printPackage(msg);
 
@@ -506,12 +548,29 @@ void loop()
   
   if (diag_receive_response(msg)) {
       if (kwp.response_received == true) {
-        Serial.print("DIAG: ");
+        if (kwp.response[0] == 0x63) {
+          Serial.print(temp_read_memory);
+          Serial.print("\t-\t");
+          for (int i = 1; i < kwp.response_len; i++) {
+            if (kwp.response[i] < 0x10) {
+              Serial.print("0");
+            }
+            Serial.print(kwp.response[i], HEX);
+            Serial.print(" ");
+         }
+         Serial.println();  
+         temp_read_memory += 32;
+         delay(25);
+         //canB.sendMsg(1460, 8, 0x05, 0x23, (temp_read_memory >> 16) & 0xff, (temp_read_memory >> 8) & 0xff, temp_read_memory & 0xff, 32); 
+        } else {
+         Serial.print("DIAG: ");
          for (int i = 0; i < kwp.response_len; i++) {
             Serial.print(kwp.response[i], HEX);
             Serial.print(" ");
          }
-         Serial.println();
+         Serial.println();          
+        }
+
       }
   }
 #endif
@@ -565,7 +624,7 @@ void loop()
 #ifdef AGW_SIMULATION
   //communication of AGW with IC
   if (msg.adrsValue == 464) {
-    //ic_env_receive(msg);
+    ic_env_receive(msg);
   }
 #endif
 
@@ -617,6 +676,7 @@ void loop()
   if (isFiltered(msg)){
     return;
   }
+  if (msg.adrsValue == 0x4F4) return;  //ic screen diag response
   printPackage(msg);
 }
 

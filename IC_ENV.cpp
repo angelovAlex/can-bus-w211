@@ -68,6 +68,15 @@ void ic_env_receive(CANMSG msg) {
       ic.data26[2] = msg.data[3];
       diag_send_kwp(ic.data26, ic.data26_len, true); 
     }
+  } else if (msg.data[2] == 9) {
+    canB.sendMsg(420, 8, 0x03, msg.data[1], msg.data[2], IC_RES_SUCCESS);
+    Serial.println("9 - ok");
+  } else if (msg.data[2] == 0x22) {
+    canB.sendMsg(420, 8, 0x03, msg.data[1], msg.data[2], IC_RES_SUCCESS);
+    Serial.println("22 - ok");
+  } else if (msg.data[2] == 0x27) {
+    canB.sendMsg(420, 8, 0x03, msg.data[1], msg.data[2], IC_RES_SUCCESS);
+    Serial.println("27 - ok");
   }
 
   return;
